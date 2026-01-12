@@ -2,7 +2,8 @@ Flask
 numpy==1.26.4
 pandas
 scikit-learn==1.8.0
-librosa
+librosa==0.10.1
 matplotlib
 soundfile
 gunicorn
+numba==0.58.1
