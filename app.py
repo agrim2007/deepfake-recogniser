@@ -7,10 +7,11 @@ import librosa.display
 import matplotlib
 matplotlib.use('Agg') 
 import matplotlib.pyplot as plt
-from flask import Flask, request, render_template, redirect, url_for
+from flask import Flask, request, render_template, redirect, url_for, flash
 import time
 
 app = Flask(__name__)
+app.secret_key = "supersecretkey"
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
 app.config['SPECTROGRAM_FOLDER'] = 'static/spectrograms'
 
@@ -18,16 +19,22 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(app.config['SPECTROGRAM_FOLDER'], exist_ok=True)
 
 MODEL_PATH = "deepfake_model_lr.pkl"
-if os.path.exists(MODEL_PATH):
-    with open(MODEL_PATH, "rb") as f:
-        model = pickle.load(f)
-else:
+try:
+    if os.path.exists(MODEL_PATH):
+        with open(MODEL_PATH, "rb") as f:
+            model = pickle.load(f)
+    else:
+        model = None
+except Exception:
     model = None
-    print("❌ WARNING: Model file not found!")
 
 def get_physics_features(file_path):
     try:
         y, sr = librosa.load(file_path, sr=16000)
+        
+        if len(y) == 0:
+            return None, "Audio file is empty."
+            
         rolloff = np.mean(librosa.feature.spectral_rolloff(y=y, sr=sr, roll_percent=0.85))
         centroid = np.mean(librosa.feature.spectral_centroid(y=y, sr=sr))
         zcr = np.mean(librosa.feature.zero_crossing_rate(y))
@@ -37,9 +44,9 @@ def get_physics_features(file_path):
         features = {"rolloff": rolloff, "centroid": centroid, "zcr": zcr}
         for i, m in enumerate(mfcc_means):
             features[f"mfcc_{i}"] = m
-        return pd.DataFrame([features])
+        return pd.DataFrame([features]), None
     except Exception as e:
-        return None
+        return None, str(e)
 
 def generate_spectrogram(file_path, output_filename):
     try:
@@ -57,22 +64,14 @@ def generate_spectrogram(file_path, output_filename):
         plt.savefig(output_path)
         plt.close() 
         return output_filename
-    except Exception as e:
-        print(f"Plot Error: {e}")
+    except Exception:
         return None
 
 def get_explanation(prediction_class):
-    if prediction_class == 1: # FAKE
-        return (
-            "⚠️ <b>Reason:</b> The spectrogram shows <b>'Digital Silence'</b> (pitch black gaps). "
-            "AI models often fail to generate the natural background noise (room tone/static) found in real phone calls. "
-            "The spectral texture is too smooth or blurry."
-        )
-    else: # REAL
-        return (
-            "✅ <b>Reason:</b> The spectrogram shows consistent <b>'Natural Noise'</b> (purple/orange streaks). "
-            "This indicates real room tone, microphone hum, or breath sounds that are physically present in human recordings."
-        )
+    if prediction_class == 1: 
+        return "⚠️ <b>Reason:</b> Spectrogram shows 'Digital Silence' (black gaps) and lacks natural room noise."
+    else: 
+        return "✅ <b>Reason:</b> Spectrogram shows consistent 'Natural Noise' (purple streaks) and microphone hum."
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
@@ -83,9 +82,14 @@ def index():
     explanation_text = ""
 
     if request.method == 'POST':
-        if 'audio' not in request.files: return redirect(request.url)
+        if 'audio' not in request.files:
+            flash("No file part found in request.")
+            return redirect(request.url)
+        
         file = request.files['audio']
-        if file.filename == '': return redirect(request.url)
+        if file.filename == '':
+            flash("No file selected.")
+            return redirect(request.url)
 
         if file:
             timestamp = int(time.time())
@@ -93,30 +97,34 @@ def index():
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             file.save(filepath)
 
-            features = get_physics_features(filepath)
-            
-            if features is not None and model is not None:
-                pred = model.predict(features)[0]
-                prob = model.predict_proba(features)[0][1]
-
-                explanation_text = get_explanation(pred)
-
-                if pred == 1:
-                    prediction_text = "🚨 FAKE DETECTED"
-                    confidence_score = f"Confidence: {prob*100:.1f}%"
-                    result_class = "danger"
-                else:
-                    prediction_text = "✅ REAL VOICE"
-                    confidence_score = f"Safety Score: {(1-prob)*100:.1f}%"
-                    result_class = "safe"
+            if model is None:
+                flash("Error: Model is not loaded. Please check server logs.")
+            else:
+                features, error_msg = get_physics_features(filepath)
                 
-                plot_filename = f"plot_{filename}.png"
-                spectrogram_url = generate_spectrogram(filepath, plot_filename)
-            
-            os.remove(filepath)
+                if features is not None:
+                    pred = model.predict(features)[0]
+                    prob = model.predict_proba(features)[0][1]
+                    explanation_text = get_explanation(pred)
 
-            if spectrogram_url:
-                spectrogram_url = url_for('static', filename=f'spectrograms/{spectrogram_url}')
+                    if pred == 1:
+                        prediction_text = "🚨 FAKE DETECTED"
+                        confidence_score = f"Confidence: {prob*100:.1f}%"
+                        result_class = "danger"
+                    else:
+                        prediction_text = "✅ REAL VOICE"
+                        confidence_score = f"Safety Score: {(1-prob)*100:.1f}%"
+                        result_class = "safe"
+                    
+                    plot_filename = f"plot_{filename}.png"
+                    spectrogram_url = generate_spectrogram(filepath, plot_filename)
+                    if spectrogram_url:
+                        spectrogram_url = url_for('static', filename=f'spectrograms/{spectrogram_url}')
+                else:
+                    flash(f"Could not analyze audio. Error: {error_msg}")
+
+            if os.path.exists(filepath):
+                os.remove(filepath)
 
     return render_template('index.html', 
                            prediction=prediction_text, 

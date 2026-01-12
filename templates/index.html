@@ -112,6 +112,19 @@
             <button type="submit">Analyze Audio</button>
         </form>
 
+        {% with messages = get_flashed_messages() %}
+          {% if messages %}
+            <div style="background-color: #f8d7da; color: #721c24; padding: 15px; border-radius: 8px; margin-top: 20px; text-align: left; border: 1px solid #f5c6cb;">
+              <strong>Something went wrong:</strong>
+              <ul style="margin: 0; padding-left: 20px;">
+              {% for message in messages %}
+                <li>{{ message }}</li>
+              {% endfor %}
+              </ul>
+            </div>
+          {% endif %}
+        {% endwith %}
+
         {% if prediction %}
         <div class="result-box {{ css_class }} active">
             
