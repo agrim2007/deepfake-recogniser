@@ -5,13 +5,13 @@ import pandas as pd
 import librosa
 import librosa.display
 import matplotlib
-matplotlib.use('Agg') # Essential for servers
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from flask import Flask, request, render_template, redirect, url_for, flash
 import time
 
 app = Flask(__name__)
-app.secret_key = "supersecretkey" # REQUIRED for flashing errors
+app.secret_key = "supersecretkey"
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
 app.config['SPECTROGRAM_FOLDER'] = 'static/spectrograms'
 
@@ -28,21 +28,22 @@ try:
             print("✅ Model loaded successfully!")
     else:
         model = None
-        print(f"❌ ERROR: Model file not found at {MODEL_PATH}")
+        print(f"ERROR: Model file not found at {MODEL_PATH}")
 except Exception as e:
     model = None
-    print(f"❌ ERROR loading model: {e}")
+    print(f"ERROR loading model: {e}")
 
-# --- PHYSICS ENGINE ---
 def get_physics_features(file_path):
     try:
-        # Load with 16kHz resampling
-        # On Render, this might fail if 'soundfile' isn't installed
         y, sr = librosa.load(file_path, sr=16000)
         
+        # Check for empty file
         if len(y) == 0:
-            return None, "Audio file is empty or corrupted."
-            
+            return None, "Audio file is empty."
+
+        noise_amp = 0.001 * np.random.uniform() * np.amax(y)
+        y = y + noise_amp * np.random.normal(size=y.shape[0])
+
         rolloff = np.mean(librosa.feature.spectral_rolloff(y=y, sr=sr, roll_percent=0.85))
         centroid = np.mean(librosa.feature.spectral_centroid(y=y, sr=sr))
         zcr = np.mean(librosa.feature.zero_crossing_rate(y))
@@ -52,11 +53,13 @@ def get_physics_features(file_path):
         features = {"rolloff": rolloff, "centroid": centroid, "zcr": zcr}
         for i, m in enumerate(mfcc_means):
             features[f"mfcc_{i}"] = m
+            
         return pd.DataFrame([features]), None
-    except Exception as e:
-        return None, str(e) # Return the actual error message
 
-# --- SPECTROGRAM GENERATOR ---
+    except Exception as e:
+        print(f"Physics Error: {e}")
+        return None, str(e)
+
 def generate_spectrogram(file_path, output_filename):
     try:
         y, sr = librosa.load(file_path, sr=16000)
@@ -82,7 +85,6 @@ def get_explanation(prediction_class):
     else: 
         return "✅ <b>Reason:</b> Spectrogram shows consistent 'Natural Noise' (purple streaks) and microphone hum."
 
-# --- ROUTES ---
 @app.route('/', methods=['GET', 'POST'])
 def index():
     prediction_text = ""
@@ -110,15 +112,18 @@ def index():
             if model is None:
                 flash("Error: Model is not loaded. Check server logs.")
             else:
-                # Get features OR error message
                 features, error_msg = get_physics_features(filepath)
                 
                 if features is not None:
                     # Successful Extraction
-                    pred = model.predict(features)[0]
+                    #pred = model.predict(features)[0]
                     prob = model.predict_proba(features)[0][1]
+                    if(prob>0.70):
+                        pred = 1
+                    else:
+                        pred = 0
                     explanation_text = get_explanation(pred)
-
+                        
                     if pred == 1:
                         prediction_text = "🚨 FAKE DETECTED"
                         confidence_score = f"Confidence: {prob*100:.1f}%"
@@ -134,10 +139,8 @@ def index():
                     if spectrogram_url:
                         spectrogram_url = url_for('static', filename=f'spectrograms/{spectrogram_url}')
                 else:
-                    # Physics Engine Failed
                     flash(f"Analysis Failed: {error_msg}")
 
-            # Clean up
             if os.path.exists(filepath):
                 os.remove(filepath)
 
