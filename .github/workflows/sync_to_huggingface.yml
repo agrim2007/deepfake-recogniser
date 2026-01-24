@@ -12,10 +12,20 @@ jobs:
     steps:
       - uses: actions/checkout@v3
         with:
-          fetch-depth: 1
+          fetch-depth: 0
           lfs: true
       - name: Push to hub
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        # Replace the URL below with your specific Hugging Face Space URL
-        run: git push --force https://agrim-007:$HF_TOKEN@huggingface.co/spaces/agrim-007/deep-fake-recognizer HEAD:main
+        run: |
+          git config --global user.email "action@github.com"
+          git config --global user.name "GitHub Action"
+          # Nuke the history on the runner to clear bad ghosts
+          rm -rf .git
+          git init -b main
+          git lfs install
+          # Add all current files (skipping the deleted bad ones)
+          git add .
+          git commit -m "Deploy from GitHub Actions"
+          # Force push this clean state to Hugging Face
+          git push --force https://agrim-007:$HF_TOKEN@huggingface.co/spaces/agrim-007/deep-fake-recognizer main
