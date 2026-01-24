@@ -3,8 +3,7 @@ title: Deep Fake Recognizer
 emoji: 🕵️
 colorFrom: blue
 colorTo: red
-sdk: gradio
-sdk_version: 3.0
-app_file: app.py
+sdk: docker
 pinned: false
+app_port: 7860
 ---
